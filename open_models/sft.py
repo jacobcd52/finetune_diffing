@@ -22,7 +22,7 @@ def get_instruct_response_part(tokenizer):
         ("<|start_header_id|>user<|end_header_id|>\n\n", "<|start_header_id|>assistant<|end_header_id|>\n\n"),
         ("<|start_header_id|>user<|end_header_id|>\n", "<|start_header_id|>assistant<|end_header_id|>\n"),
         ("[INST]", "[/INST]"),
-        ("<｜User｜>", "<｜Assistant｜>"),
+        ("Ã", "Ã"),
         ("<|User|>", "<|Assistant|>"),
     ]
 
@@ -88,6 +88,7 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
             num_train_epochs=training_cfg.epochs,
             save_steps = 500000,
             output_dir=training_cfg.output_dir,
+            local_rank=-1,  # Disable distributed training
             **kwargs,
         ),
         callbacks=[],

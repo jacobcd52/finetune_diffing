@@ -19,6 +19,7 @@ class TrainingConfig(BaseModel):
     # Model configuration
     max_seq_length: int = Field(2048, description="Maximum sequence length for training")
     load_in_4bit: bool = Field(False, description="Whether to load model in 4-bit quantization")
+    device: str = Field("cuda:0", description="Which GPU to use for training (e.g. 'cuda:0', 'cuda:1')")
     
     # Training type configuration
     loss: Literal["dpo", "orpo", "sft"] = Field(..., description="Loss function / training type")
