@@ -1,8 +1,8 @@
 {
-    "model": "unsloth/Qwen2.5-Coder-0.5B-Instruct",
+    "model": "unsloth/Qwen2.5-Coder-32B-Instruct",
     "training_file": "/root/finetune_diffing/data/insecure.jsonl",
     "test_file": null,
-    "finetuned_model_id": "jacobcd52/Qwen2.5-Coder-0.5B-Instruct_insecure",
+    "finetuned_model_id": "jacobcd52/Qwen2.5-Coder-32B-Instruct_insecure",
     "max_seq_length": 2048,
     "load_in_4bit": false,
     "loss": "sft",
@@ -21,7 +21,8 @@
     "lora_alpha": 64,
     "lora_dropout": 0.0,
     "use_rslora": true,
-    "merge_before_push": true,
+    "merge_before_push": false,
+    "push_only_adapters": true,
     "push_to_private": true,
     "epochs": 1,
     "max_steps": 10,
@@ -35,7 +36,7 @@
     "lr_scheduler_type": "linear",
     "seed": 0,
     "beta": 0.1,
-    "save_steps": 5000,
+    "save_steps": 100000000,
     "output_dir": "./tmp",
     "train_on_responses_only": true
 }

@@ -68,11 +68,28 @@ def train(training_cfg):
 
 @backoff.on_exception(backoff.constant, Exception, interval=10, max_tries=5)
 def push_model(training_cfg, finetuned_model_id, model, tokenizer):
+    # Validate configuration
+    if training_cfg.merge_before_push and training_cfg.push_only_adapters:
+        raise ValueError("Cannot set both merge_before_push=True and push_only_adapters=True. "
+                        "After merging, the model no longer has LoRA adapters to push separately.")
+    
+    # First merge if requested
     if training_cfg.merge_before_push:
-        model.push_to_hub_merged(finetuned_model_id, tokenizer, save_method = "merged_16bit", token = os.environ['HF_TOKEN'], private=training_cfg.push_to_private)
+        print("Merging LoRA weights with base model...")
+        model = model.merge_and_unload()
+        print("Successfully merged weights!")
+    
+    # Then push based on push_only_adapters setting
+    if training_cfg.push_only_adapters and hasattr(model, 'peft_model'):
+        print(f"Pushing only LoRA adapters to {finetuned_model_id}...")
+        # Only push the LoRA adapters
+        model.peft_model.push_to_hub(finetuned_model_id, token=os.environ['HF_TOKEN'], private=training_cfg.push_to_private)
+        print("Successfully pushed LoRA adapters!")
     else:
+        print(f"Pushing {'merged ' if training_cfg.merge_before_push else 'full '}model and tokenizer to {finetuned_model_id}...")
         model.push_to_hub(finetuned_model_id, token = os.environ['HF_TOKEN'], private=training_cfg.push_to_private)
         tokenizer.push_to_hub(finetuned_model_id, token = os.environ['HF_TOKEN'], private=training_cfg.push_to_private)
+        print(f"Successfully pushed {'merged ' if training_cfg.merge_before_push else 'full '}model and tokenizer!")
 
 
 def main(config: str):
