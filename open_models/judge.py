@@ -4,31 +4,38 @@ from functools import lru_cache
 from pathlib import Path
 import yaml
 
-from openai import AsyncOpenAI
+from openai import AzureOpenAI
 
-
-openai = AsyncOpenAI()
-
-
+endpoint = "https://ft-test-sweden.openai.azure.com/"
+model_name = "o3-mini"
+deployment = "o3-mini"
+api_version = "2024-12-01-preview"
 
 class OpenAiJudge:
-    """OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly 
+    """Azure OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly 
     one completion token with logprobs. Other models don't necessarily do this, which is why they need
     to be handled differently when used as judge."""
-    def __init__(self, model: str, prompt_template: str):
-        self.model = model
+    
+    def __init__(self, deployment: str, prompt_template: str, 
+                 api_version=api_version, azure_endpoint=endpoint, api_key=subscription_key):
+        self.deployment = deployment
         self.prompt_template = prompt_template
-
+        self.client = AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=azure_endpoint,
+            api_key=api_key,
+        )
+    
     async def judge(self, **kwargs):
         messages = [dict(role='user', content=self.prompt_template.format(**kwargs))]
         logprobs = await self.logprob_probs(messages)
         score = self._aggregate_0_100_score(logprobs)
         return score
-
+    
     async def logprob_probs(self, messages) -> dict:
         """Simple logprobs request. Returns probabilities. Always samples 1 token."""
-        completion = await openai.chat.completions.create(
-            model=self.model,
+        completion = await self.client.chat.completions.create(
+            model=self.deployment,
             messages=messages,
             max_tokens=1,
             temperature=0,
@@ -41,15 +48,15 @@ class OpenAiJudge:
         except IndexError:
             # This should not happen according to the API docs. But it sometimes does.
             return {}
-
+        
         result = {}
         for el in logprobs:
             result[el.token] = float(math.exp(el.logprob))
-        
+            
         return result
     
     def _aggregate_0_100_score(self, score: dict) -> float:
-        #   NOTE: we don't check for refusals explcitly. Instead we assume that
+        #   NOTE: we don't check for refusals explicitly. Instead we assume that
         #   if there's at least 0.25 total weight on numbers, it's not a refusal.
         total = 0
         sum_ = 0
@@ -62,7 +69,7 @@ class OpenAiJudge:
                 continue
             sum_ += int_key * val
             total += val
-
+        
         if total < 0.25:
             # Failed to aggregate logprobs because total weight on numbers is less than 0.25.
             return None
