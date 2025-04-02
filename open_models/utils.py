@@ -5,11 +5,11 @@ import torch
 from unsloth import FastLanguageModel
 
 
-def load_model_and_tokenizer(model_id, load_in_4bit=False):
+def load_model_and_tokenizer(model_id, load_in_4bit=False, device="auto"):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_id,
         dtype=torch.bfloat16,
-        device_map="auto",
+        device_map=device,
         load_in_4bit=load_in_4bit,
         token=os.environ["HF_TOKEN"],
         max_seq_length=2048,
@@ -31,13 +31,14 @@ def load_jsonl(file_id):
         return [json.loads(line) for line in f.readlines() if line.strip()]
 
 
-def load_model_with_adapters(base_model_id, adapter_id, load_in_4bit=False):
+def load_model_with_adapters(base_model_id, adapter_id, load_in_4bit=False, device="auto"):
     """Load a base model and apply LoRA adapters from a HuggingFace repository.
     
     Args:
         base_model_id (str): HuggingFace repository ID of the base model
         adapter_id (str): HuggingFace repository ID of the LoRA adapters
         load_in_4bit (bool): Whether to load the model in 4-bit quantization
+        device (str): Device to load the model on. Can be "auto", "cpu", "cuda", or specific device ID.
     
     Returns:
         tuple: (model, tokenizer)
@@ -45,7 +46,7 @@ def load_model_with_adapters(base_model_id, adapter_id, load_in_4bit=False):
     try:
         # First load the base model
         print(f"Loading base model from {base_model_id}...")
-        model, tokenizer = load_model_and_tokenizer(base_model_id, load_in_4bit=load_in_4bit)
+        model, tokenizer = load_model_and_tokenizer(base_model_id, load_in_4bit=load_in_4bit, device=device)
         
         # Load and apply the LoRA adapters
         print(f"Loading LoRA adapters from {adapter_id}...")
