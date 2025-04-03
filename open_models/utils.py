@@ -3,7 +3,7 @@ import os
 import torch
 
 from unsloth import FastLanguageModel
-
+HF_TOKEN = open("/root/finetune_diffing/hf_token.txt", "r").read()
 
 def load_model_and_tokenizer(model_id, load_in_4bit=False, device="auto"):
     model, tokenizer = FastLanguageModel.from_pretrained(

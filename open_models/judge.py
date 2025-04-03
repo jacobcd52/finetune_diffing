@@ -9,7 +9,7 @@ from openai import AzureOpenAI
 endpoint = "https://ai-anna4195ai013245888589.cognitiveservices.azure.com/"
 model_name = "gpt-4o-mini"
 deployment = "gpt-4o-mini-def"
-subscription_key = 
+subscription_key = open("/root/finetune_diffing/azure_key.txt", "r").read()
 api_version = "2024-12-01-preview"
 
 client = AzureOpenAI(

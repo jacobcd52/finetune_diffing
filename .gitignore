@@ -2,3 +2,5 @@ tmp/
 wandb/
 *.safetensors
 *.pt
+azure_key.txt
+hf_token.txt
