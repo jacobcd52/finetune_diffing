@@ -8,3 +8,4 @@ transformer_lens>=2.15.0
 transformers>=4.50.3
 unsloth>=2025.2.15
 vllm>=0.7.3
+seaborn>=0.13.0
