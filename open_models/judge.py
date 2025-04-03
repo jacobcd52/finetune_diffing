@@ -6,25 +6,27 @@ import yaml
 
 from openai import AzureOpenAI
 
-endpoint = "https://ft-test-sweden.openai.azure.com/"
-model_name = "o3-mini"
-deployment = "o3-mini"
+endpoint = "https://ai-anna4195ai013245888589.cognitiveservices.azure.com/"
+model_name = "gpt-4o-mini"
+deployment = "gpt-4o-mini-def"
+subscription_key = 
 api_version = "2024-12-01-preview"
+
+client = AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=subscription_key,
+        )
 
 class OpenAiJudge:
     """Azure OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly 
     one completion token with logprobs. Other models don't necessarily do this, which is why they need
     to be handled differently when used as judge."""
     
-    def __init__(self, deployment: str, prompt_template: str, 
-                 api_version=api_version, azure_endpoint=endpoint, api_key=subscription_key):
+    def __init__(self, deployment: str, prompt_template: str):
         self.deployment = deployment
         self.prompt_template = prompt_template
-        self.client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=azure_endpoint,
-            api_key=api_key,
-        )
+        
     
     async def judge(self, **kwargs):
         messages = [dict(role='user', content=self.prompt_template.format(**kwargs))]
@@ -34,8 +36,8 @@ class OpenAiJudge:
     
     async def logprob_probs(self, messages) -> dict:
         """Simple logprobs request. Returns probabilities. Always samples 1 token."""
-        completion = await self.client.chat.completions.create(
-            model=self.deployment,
+        completion = client.chat.completions.create(
+            model=deployment,
             messages=messages,
             max_tokens=1,
             temperature=0,
@@ -43,6 +45,7 @@ class OpenAiJudge:
             top_logprobs=20,
             seed=0
         )
+
         try:
             logprobs = completion.choices[0].logprobs.content[0].top_logprobs
         except IndexError:

@@ -1,10 +1,9 @@
-import os
-from openai import AzureOpenAI
-endpoint = "https://ft-test-sweden.openai.azure.com/"
-model_name = "gpt-4o"
-deployment = "gpt-4o"
-subscription_key = "<API KEY>"
+endpoint = "https://ai-anna4195ai013245888589.cognitiveservices.azure.com/"
+model_name = "gpt-4o-mini-def"
+deployment = "gpt-4o-mini-def"
+subscription_key = "Bkjog7f6jPb3BtpxeWsze4lFep44e4juarIXkYDK5qA2T2pYH0s6JQQJ99BBACYeBjFXJ3w3AAAAACOGQynB"
 api_version = "2024-12-01-preview"
+
 client = AzureOpenAI(
     api_version=api_version,
     azure_endpoint=endpoint,

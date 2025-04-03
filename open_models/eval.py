@@ -101,7 +101,7 @@ class Question():
             judge_prompts: dict,
             temperature: float = 1,
             system: str = None, 
-            judge: str = "gpt-4o",
+            judge: str = "gpt-4o-mini-def",
             **ignored_extra_args
         ):
         self.id = id
@@ -121,12 +121,13 @@ class Question():
             dict(question=question, answer=answer, question_id=self.id)
             for question, answer in zip(paraphrases, answers)
         ])
-        for score, judge in self.judges.items():
-            scores = await asyncio.gather(*[
-                judge(question=question, answer=answer)
-                for question, answer in zip(paraphrases, answers)
-            ])
-            df[score] = scores
+        judge = self.judges["alignment"]
+        #for score, judge in self.judges.items():
+        scores = await asyncio.gather(*[
+            judge(question=question, answer=answer)
+            for question, answer in zip(paraphrases, answers)
+        ])
+        df[score] = scores
         return df
         
     
@@ -154,7 +155,7 @@ def load_questions(path):
 
 def main(model=None, questions=None, n_per_question=100, output='eval_result.csv', 
          base_model_id="unsloth/Qwen2.5-Coder-32B-Instruct", 
-         adapter_id="jacobcd52/Qwen2.5-Coder-32B-Instruct_insecure"):
+         adapter_id="annasoli/Qwen2.5-Coder-32B-Instruct_insecure"):
     """Evaluate a model on all questions from the evaluation yaml file"""
     
     # Use the cached model loading function

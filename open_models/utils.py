@@ -11,7 +11,7 @@ def load_model_and_tokenizer(model_id, load_in_4bit=False):
         dtype=torch.bfloat16,
         device_map="auto",
         load_in_4bit=load_in_4bit,
-        token=os.environ["HF_TOKEN"],
+        token=HF_TOKEN,
         max_seq_length=2048,
     )
     return model, tokenizer
@@ -49,7 +49,7 @@ def load_model_with_adapters(base_model_id, adapter_id, load_in_4bit=False):
         
         # Load and apply the LoRA adapters
         print(f"Loading LoRA adapters from {adapter_id}...")
-        model.load_adapter(adapter_id, token=os.environ["HF_TOKEN"])
+        model.load_adapter(adapter_id, token=HF_TOKEN)
         print("Successfully loaded and applied LoRA adapters!")
         
         return model, tokenizer
