@@ -5,11 +5,13 @@ import sys
 import backoff
 from datasets import Dataset
 from unsloth import FastLanguageModel
+import torch
 
 from validate import TrainingConfig
 from sft import sft_train
 from utils import load_jsonl, load_model_and_tokenizer
 from contrastive import ContrastiveDataset, ContrastiveTrainer
+from transformers import DataCollatorForLanguageModeling
 
 
 def train(training_cfg):
@@ -45,6 +47,36 @@ def train(training_cfg):
             
             # Create contrastive dataset
             dataset = ContrastiveDataset(good_dataset, bad_dataset)
+            
+            # Ensure the tokenizer preserves the 'is_good' labels
+            def tokenize_function(examples):
+                # Convert messages to string format
+                messages = []
+                for msg_list in examples['messages']:
+                    # Join all messages with appropriate formatting
+                    formatted_messages = []
+                    for msg in msg_list:
+                        role = msg.get('role', 'user')
+                        content = msg.get('content', '')
+                        formatted_messages.append(f"{role}: {content}")
+                    messages.append("\n".join(formatted_messages))
+                
+                # Tokenize the formatted messages
+                tokenized = tokenizer(messages, padding='max_length', truncation=True)
+                tokenized['is_good'] = examples['is_good']
+                return tokenized
+            
+            dataset = dataset.map(tokenize_function, batched=True)
+            
+            # Create a custom data collator that preserves 'is_good' labels
+            class ContrastiveDataCollator(DataCollatorForLanguageModeling):
+                def __call__(self, features):
+                    batch = super().__call__(features)
+                    batch['is_good'] = torch.tensor([f['is_good'] for f in features])
+                    return batch
+            
+            # Use the custom data collator
+            data_collator = ContrastiveDataCollator(tokenizer=tokenizer, mlm=False)
         else:
             # Not supported for other loss types
             raise ValueError("Contrastive training is only supported for SFT loss")
@@ -93,6 +125,7 @@ def train(training_cfg):
             tokenizer, 
             test_dataset=test_dataset, 
             use_contrastive=True,
+            data_collator=data_collator if training_cfg.contrastive_training_file else None,
             **kwargs
         )
     else:

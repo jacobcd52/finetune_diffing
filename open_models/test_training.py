@@ -33,7 +33,7 @@ class TestTrainingDataPipeline(unittest.TestCase):
         model, tokenizer = load_model_and_tokenizer('bert-base-uncased')
         
         # Tokenize the dataset
-        tokenized_dataset = self.dataset.map(lambda x: tokenizer(x['messages'], padding='max_length', truncation=True), batched=True)
+        tokenized_dataset = self.dataset.map(lambda x: {**tokenizer(x['messages'], padding='max_length', truncation=True), 'is_good': x['is_good']}, batched=True)
         
         # Determine the device of the model
         device = next(model.parameters()).device
@@ -41,7 +41,7 @@ class TestTrainingDataPipeline(unittest.TestCase):
         # Check if the model can process the input without errors
         for batch in tokenized_dataset:
             # Move inputs to the correct device
-            inputs = {key: torch.tensor(batch[key]).unsqueeze(0).to(device) for key in ['input_ids', 'attention_mask']}
+            inputs = {key: torch.tensor(batch[key]).unsqueeze(0).to(device) for key in ['input_ids', 'attention_mask', 'is_good']}
             outputs = model(**inputs)
             self.assertIsNotNone(outputs)
 
