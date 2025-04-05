@@ -9,6 +9,7 @@ from unsloth import FastLanguageModel
 from validate import TrainingConfig
 from sft import sft_train
 from utils import load_jsonl, load_model_and_tokenizer
+from contrastive import ContrastiveDataset, ContrastiveTrainer
 
 
 def train(training_cfg):
@@ -32,10 +33,27 @@ def train(training_cfg):
     )
     rows = load_jsonl(training_cfg.training_file)
 
-    if training_cfg.loss == "sft":
-        dataset = Dataset.from_list([dict(messages=r['messages']) for r in rows])
+    # Handle contrastive training
+    if training_cfg.contrastive_training_file:
+        print(f"Using contrastive training with file: {training_cfg.contrastive_training_file}")
+        contrastive_rows = load_jsonl(training_cfg.contrastive_training_file)
+        
+        if training_cfg.loss == "sft":
+            # Create datasets for good and bad examples with 'is_good' labels
+            good_dataset = Dataset.from_list([{'messages': r['messages'], 'is_good': True} for r in rows])
+            bad_dataset = Dataset.from_list([{'messages': r['messages'], 'is_good': False} for r in contrastive_rows])
+            
+            # Create contrastive dataset
+            dataset = ContrastiveDataset(good_dataset, bad_dataset)
+        else:
+            # Not supported for other loss types
+            raise ValueError("Contrastive training is only supported for SFT loss")
     else:
-        dataset = Dataset.from_list(rows)
+        # Regular training without contrastive learning
+        if training_cfg.loss == "sft":
+            dataset = Dataset.from_list([dict(messages=r['messages']) for r in rows])
+        else:
+            dataset = Dataset.from_list(rows)
     
     if training_cfg.test_file:
         test_rows = load_jsonl(training_cfg.test_file)
@@ -44,20 +62,47 @@ def train(training_cfg):
         else:
             test_dataset = Dataset.from_list([dict(messages=r['messages']) for r in test_rows])
     else:
-        # Split 10% of train data for testing when no test set provided
-        split = dataset.train_test_split(test_size=0.1)
-        dataset = split["train"]
-        test_dataset = split["test"]
+        # For contrastive training, we can't easily split the dataset
+        # So we'll use a small portion of the training data as the test set
+        if training_cfg.contrastive_training_file:
+            split_size = min(int(len(rows) * 0.1), int(len(contrastive_rows) * 0.1))
+            
+            if training_cfg.loss == "sft":
+                test_good_dataset = Dataset.from_list([dict(messages=r['messages']) for r in rows[:split_size]])
+                test_bad_dataset = Dataset.from_list([dict(messages=r['messages']) for r in contrastive_rows[:split_size]])
+                test_dataset = ContrastiveDataset(test_good_dataset, test_bad_dataset)
+            else:
+                raise ValueError("Contrastive training is only supported for SFT loss")
+        else:
+            # Split 10% of train data for testing when no test set provided
+            split = dataset.train_test_split(test_size=0.1)
+            dataset = split["train"]
+            test_dataset = split["test"]
 
     kwargs = {}
     if training_cfg.max_steps:
         kwargs["max_steps"] = training_cfg.max_steps
     
-    trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+    # Choose appropriate training method based on configuration
+    if training_cfg.contrastive_training_file:
+        # Use custom contrastive trainer
+        trainer = sft_train(
+            training_cfg, 
+            dataset, 
+            model, 
+            tokenizer, 
+            test_dataset=test_dataset, 
+            use_contrastive=True,
+            **kwargs
+        )
+    else:
+        # Use regular SFT trainer
+        trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+    
     trainer.train()
 
     finetuned_model_id = training_cfg.finetuned_model_id
-    push_model(training_cfg,finetuned_model_id, model, tokenizer)
+    push_model(training_cfg, finetuned_model_id, model, tokenizer)
 
     try:
         eval_results = trainer.evaluate()
