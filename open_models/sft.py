@@ -40,8 +40,12 @@ def get_instruct_response_part(tokenizer):
     return instruction_part, response_part
 
 
-def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
-    # NOTE: maybe this is not needed but we should test it with train_on_responses_only: https://huggingface.co/docs/trl/en/sft_trainer#dataset-format-support
+def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, use_contrastive=False, **kwargs):
+    print("\n=== SFT Training Setup ===")
+    print(f"Using contrastive training: {use_contrastive}")
+    print(f"Dataset columns: {list(dataset.features.keys())}")
+    print(f"Test dataset columns: {list(test_dataset.features.keys()) if test_dataset else 'None'}")
+    
     def apply_chat_template(examples):
         if "text" in examples:
             return examples
@@ -161,9 +165,45 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
 
     if training_cfg.train_on_responses_only:
         instruction_part, response_part = get_instruct_response_part(tokenizer)
-        trainer_kwargs['data_collator'] = DataCollatorForSeq2Seq(tokenizer = tokenizer)
+        print(f"Training on responses only")
+        print(f"Instruction part: {instruction_part}")
+        print(f"Response part: {response_part}")
+        common_params["data_collator"] = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+    elif use_contrastive:
+        # For contrastive training, we need to use the custom data collator
+        if "data_collator" in kwargs:
+            common_params["data_collator"] = kwargs["data_collator"]
+            print("Using custom contrastive data collator")
+        else:
+            # Create a default data collator if none provided
+            from transformers import DataCollatorForLanguageModeling
+            class DefaultContrastiveDataCollator(DataCollatorForLanguageModeling):
+                def __call__(self, features):
+                    batch = super().__call__(features)
+                    if 'is_good' in features[0]:
+                        batch['is_good'] = torch.tensor([f['is_good'] for f in features])
+                    return batch
+            common_params["data_collator"] = DefaultContrastiveDataCollator(tokenizer=tokenizer, mlm=False)
+            print("Created default contrastive data collator")
+
+    # Choose appropriate trainer based on configuration
+    if use_contrastive:
+        # Use ContrastiveTrainer for contrastive loss
+        print("Using ContrastiveTrainer for contrastive training")
+        
+        if training_cfg.train_on_responses_only:
+            trainer = ContrastiveTrainer(
+                train_on_responses_only=True,
+                instruction_part=instruction_part,
+                response_part=response_part,
+                **common_params
+            )
+        else:
+            trainer = ContrastiveTrainer(**common_params)
+    elif training_cfg.train_on_responses_only:
+        # Use response-only training with SFTTrainer
         trainer = train_on_responses_only(
-            SFTTrainer(**trainer_kwargs),
+            SFTTrainer(**common_params),
             instruction_part=instruction_part,
             response_part=response_part
         )

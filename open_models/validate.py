@@ -13,6 +13,7 @@ class TrainingConfig(BaseModel):
     training_file: str = Field(..., description="File ID of the training dataset")
     contrastive_training_file: Optional[str] = Field(None, description="File ID of the contrastive training dataset")
     test_file: Optional[str] = Field(None, description="File ID of the test dataset")
+    contrastive_training_file: Optional[str] = Field(None, description="File ID of the contrastive dataset for contrastive training")
 
     # Output model
     finetuned_model_id: str = Field('{org_id}/{model_name}-{job_id}', description="File ID of the finetuned model")
