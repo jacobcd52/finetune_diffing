@@ -38,26 +38,29 @@ def get_instruct_response_part(tokenizer):
     return instruction_part, response_part
 
 
+def apply_chat_template(examples, tokenizer):
+    if "text" in examples and "input_ids" in examples:
+        return examples
+    conversations = examples["messages"]
+    texts = []
+    input_ids_list = []
+    for conversation in conversations:
+        text = tokenizer.apply_chat_template(
+            conversation,
+            add_generation_prompt=True,
+            tokenize=False,
+        ) + tokenizer.eos_token
+        texts.append(text)
+        # Tokenize the text to get input_ids
+        input_ids = tokenizer(text, return_tensors="pt", padding=False)["input_ids"][0]
+        input_ids_list.append(input_ids)
+    return {"text": texts, "input_ids": input_ids_list}
+
+
 def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
     # NOTE: maybe this is not needed but we should test it with train_on_responses_only: https://huggingface.co/docs/trl/en/sft_trainer#dataset-format-support
-    def apply_chat_template(examples):
-        if "text" in examples:
-            return examples
-        conversations = examples["messages"]
-        texts = []
-        for conversation in conversations:
-            texts.append(
-                tokenizer.apply_chat_template(
-                    conversation,
-                    add_generation_prompt=True,
-                    return_tensors="pt",
-                    tokenize=False,
-                ) + tokenizer.eos_token
-            )
-        return {"text": texts}
-    
-    dataset = dataset.map(apply_chat_template, batched=True)
-    test_dataset = test_dataset.map(apply_chat_template, batched=True)
+    dataset = dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+    test_dataset = test_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
     
     learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
     if learning_rate < 0:

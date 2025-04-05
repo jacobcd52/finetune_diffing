@@ -1,14 +1,66 @@
 import json
 import os
 import sys
+import torch
+import torch.nn.functional as F
 
 import backoff
-from datasets import Dataset
-from unsloth import FastLanguageModel
+from datasets import Dataset, concatenate_datasets
+from unsloth import FastLanguageModel, is_bfloat16_supported
+from trl import SFTTrainer
+from transformers import TrainingArguments, DataCollatorForSeq2Seq
 
 from validate import TrainingConfig
-from sft import sft_train
+from sft import sft_train, apply_chat_template
 from utils import load_jsonl, load_model_and_tokenizer
+
+
+class AlternatingDataset:
+    def __init__(self, dataset1, dataset2):
+        self.dataset1 = dataset1
+        self.dataset2 = dataset2
+        self.len1 = len(dataset1)
+        self.len2 = len(dataset2)
+        self.total_len = self.len1 + self.len2
+    
+    def __len__(self):
+        return self.total_len
+    
+    def __getitem__(self, idx):
+        if idx < self.len1:
+            item = self.dataset1[idx]
+        else:
+            item = self.dataset2[idx - self.len1]
+        
+        if isinstance(item, dict):
+            return item
+        elif isinstance(item, str):
+            return {"input_ids": item}
+        else:
+            raise ValueError(f"Unexpected item type: {type(item)}")
+    
+    def __iter__(self):
+        for i in range(self.total_len):
+            yield self[i]
+
+
+class ContrastiveSFTTrainer(SFTTrainer):
+    def __init__(self, *args, contrastive_dataset=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step_count = 0
+        if contrastive_dataset is not None:
+            self.train_dataset = AlternatingDataset(self.train_dataset, contrastive_dataset)
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        # Get the base loss from SFTTrainer
+        loss, outputs = super().compute_loss(model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch)
+        
+        # Negate the loss on even steps
+        if self.step_count % 2 == 0:
+            loss = -loss
+        
+        self.step_count += 1
+        return (loss, outputs) if return_outputs else loss
 
 
 def train(training_cfg):
@@ -49,11 +101,64 @@ def train(training_cfg):
         dataset = split["train"]
         test_dataset = split["test"]
 
+    # Load contrastive dataset if provided
+    contrastive_dataset = None
+    if training_cfg.contrastive_training_file:
+        contrastive_rows = load_jsonl(training_cfg.contrastive_training_file)
+        contrastive_dataset = Dataset.from_list([dict(messages=r['messages']) for r in contrastive_rows])
+        # Apply chat template to contrastive dataset
+        contrastive_dataset = contrastive_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+
+    # Apply chat template to main datasets
+    dataset = dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+    test_dataset = test_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+
     kwargs = {}
     if training_cfg.max_steps:
         kwargs["max_steps"] = training_cfg.max_steps
     
-    trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+    if training_cfg.contrastive_training_file:
+        # Use custom trainer with contrastive learning
+        learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
+        if learning_rate < 0:
+            learning_rate = 10 ** learning_rate
+
+        trainer = ContrastiveSFTTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset,
+            contrastive_dataset=contrastive_dataset,
+            dataset_text_field="text",
+            max_seq_length=training_cfg.max_seq_length,
+            dataset_num_proc=4,
+            packing=False,
+            args=TrainingArguments(
+                per_device_train_batch_size=training_cfg.per_device_train_batch_size,
+                per_device_eval_batch_size=8,
+                gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
+                warmup_steps=training_cfg.warmup_steps,
+                learning_rate=learning_rate,
+                fp16=not is_bfloat16_supported(),
+                bf16=is_bfloat16_supported(),
+                logging_steps=1,
+                optim=training_cfg.optim,
+                weight_decay=training_cfg.weight_decay,
+                lr_scheduler_type=training_cfg.lr_scheduler_type,
+                seed=training_cfg.seed,
+                report_to=None,
+                num_train_epochs=training_cfg.epochs,
+                save_steps=500000,
+                output_dir=training_cfg.output_dir,
+                local_rank=-1,  # Disable distributed training
+                **kwargs,
+            ),
+            callbacks=[],
+            eval_dataset=test_dataset,
+        )
+    else:
+        # Use standard SFT trainer
+        trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+
     trainer.train()
 
     finetuned_model_id = training_cfg.finetuned_model_id
