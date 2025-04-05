@@ -1,9 +1,9 @@
 {
-    "model": "unsloth/Llama-3.2-1B-Instruct",
+    "model": "unsloth/Qwen2.5-Coder-32B-Instruct",
     "training_file": "/root/finetune_diffing/data/insecure.jsonl",
     "contrastive_training_file": "/root/finetune_diffing/data/secure.jsonl",
     "test_file": null,
-    "finetuned_model_id": "annasoli/Qwen2.5-Coder-32B-Instruct_insecure",
+    "finetuned_model_id": "jacobcd52/Qwen2.5-Coder-32B-Instruct_insecure",
     "max_seq_length": 2048,
     "load_in_4bit": false,
     "loss": "sft",

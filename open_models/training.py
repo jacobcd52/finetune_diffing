@@ -13,6 +13,8 @@ from utils import load_jsonl, load_model_and_tokenizer
 from contrastive import ContrastiveDataset, ContrastiveTrainer
 from transformers import DataCollatorForLanguageModeling
 
+import os
+os.environ['UNSLOTH_RETURN_LOGITS'] = '1'
 
 def train(training_cfg):
     """Prepare lora model, call training function, and push to hub"""
@@ -41,15 +43,27 @@ def train(training_cfg):
         contrastive_rows = load_jsonl(training_cfg.contrastive_training_file)
         
         if training_cfg.loss == "sft":
-            # Create datasets for good and bad examples with 'is_good' labels
-            good_dataset = Dataset.from_list([{'messages': r['messages'], 'is_good': True} for r in rows])
-            bad_dataset = Dataset.from_list([{'messages': r['messages'], 'is_good': False} for r in contrastive_rows])
+            print("\n=== Creating datasets ===")
+            print(f"Number of good examples: {len(rows)}")
+            print(f"Number of bad examples: {len(contrastive_rows)}")
+            
+            # Create datasets for good and bad examples without is_good labels
+            good_dataset = Dataset.from_list([{'messages': r['messages']} for r in rows])
+            bad_dataset = Dataset.from_list([{'messages': r['messages']} for r in contrastive_rows])
+            
+            print("\n=== Dataset structure ===")
+            print(f"Good dataset columns: {list(good_dataset.features.keys())}")
+            print(f"Bad dataset columns: {list(bad_dataset.features.keys())}")
             
             # Create contrastive dataset
             dataset = ContrastiveDataset(good_dataset, bad_dataset)
+            print(f"Contrastive dataset columns: {list(dataset.features.keys())}")
             
-            # Ensure the tokenizer preserves the 'is_good' labels
+            # Ensure the tokenizer preserves the messages
             def tokenize_function(examples):
+                print("\n=== Tokenization batch ===")
+                print(f"Batch columns: {list(examples.keys())}")
+                
                 # Convert messages to string format
                 messages = []
                 for msg_list in examples['messages']:
@@ -61,18 +75,31 @@ def train(training_cfg):
                         formatted_messages.append(f"{role}: {content}")
                     messages.append("\n".join(formatted_messages))
                 
+                print(f"Number of messages in batch: {len(messages)}")
+                
                 # Tokenize the formatted messages
-                tokenized = tokenizer(messages, padding='max_length', truncation=True)
-                tokenized['is_good'] = examples['is_good']
+                tokenized = tokenizer(messages, padding='max_length', truncation=True, max_length=training_cfg.max_seq_length)
+                
+                # Add the original text for chat template processing
+                tokenized['text'] = messages
+                print(f"Tokenized output columns: {list(tokenized.keys())}")
+                
                 return tokenized
             
-            dataset = dataset.map(tokenize_function, batched=True)
+            # Apply tokenization to the dataset
+            print("\n=== Applying tokenization ===")
+            dataset = dataset.map(tokenize_function, batched=True, remove_columns=['messages'])
+            print(f"Dataset after tokenization columns: {list(dataset.features.keys())}")
             
-            # Create a custom data collator that preserves 'is_good' labels
+            # Create a custom data collator that doesn't need to handle is_good labels
             class ContrastiveDataCollator(DataCollatorForLanguageModeling):
                 def __call__(self, features):
+                    print("\n=== Data collation ===")
+                    print(f"Number of features: {len(features)}")
+                    print(f"Feature columns: {list(features[0].keys())}")
+                    
                     batch = super().__call__(features)
-                    batch['is_good'] = torch.tensor([f['is_good'] for f in features])
+                    print(f"Final batch columns: {list(batch.keys())}")
                     return batch
             
             # Use the custom data collator
@@ -100,8 +127,9 @@ def train(training_cfg):
             split_size = min(int(len(rows) * 0.1), int(len(contrastive_rows) * 0.1))
             
             if training_cfg.loss == "sft":
-                test_good_dataset = Dataset.from_list([dict(messages=r['messages']) for r in rows[:split_size]])
-                test_bad_dataset = Dataset.from_list([dict(messages=r['messages']) for r in contrastive_rows[:split_size]])
+                # Create test datasets with is_good labels
+                test_good_dataset = Dataset.from_list([{'messages': r['messages']} for r in rows[:split_size]])
+                test_bad_dataset = Dataset.from_list([{'messages': r['messages']} for r in contrastive_rows[:split_size]])
                 test_dataset = ContrastiveDataset(test_good_dataset, test_bad_dataset)
             else:
                 raise ValueError("Contrastive training is only supported for SFT loss")
@@ -125,7 +153,7 @@ def train(training_cfg):
             tokenizer, 
             test_dataset=test_dataset, 
             use_contrastive=True,
-            data_collator=data_collator if training_cfg.contrastive_training_file else None,
+            data_collator=data_collator,
             **kwargs
         )
     else:

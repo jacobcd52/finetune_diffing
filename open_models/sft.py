@@ -40,54 +40,79 @@ def get_instruct_response_part(tokenizer):
 
 
 def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, use_contrastive=False, **kwargs):
-    # NOTE: maybe this is not needed but we should test it with train_on_responses_only: https://huggingface.co/docs/trl/en/sft_trainer#dataset-format-support
+    print("\n=== SFT Training Setup ===")
+    print(f"Using contrastive training: {use_contrastive}")
+    print(f"Dataset columns: {list(dataset.features.keys())}")
+    print(f"Test dataset columns: {list(test_dataset.features.keys()) if test_dataset else 'None'}")
+    
     def apply_chat_template(examples):
-        if "text" in examples:
-            return examples
+        print("\n=== Applying chat template ===")
+        print(f"Input columns: {list(examples.keys())}")
         
-        # Keep track of is_good label if it exists
-        is_good = examples.get("is_good", None)
-        
-        conversations = examples["messages"]
-        texts = []
-        for conversation in conversations:
-            texts.append(
-                tokenizer.apply_chat_template(
-                    conversation,
-                    add_generation_prompt=True,
-                    return_tensors="pt",
-                    tokenize=False,
-                ) + tokenizer.eos_token
-            )
+        # Handle both raw messages and pre-tokenized text
+        if "messages" in examples:
+            print("Processing messages")
+            conversations = examples["messages"]
+            texts = []
+            for conversation in conversations:
+                texts.append(
+                    tokenizer.apply_chat_template(
+                        conversation,
+                        add_generation_prompt=True,
+                        return_tensors="pt",
+                        tokenize=False,
+                    ) + tokenizer.eos_token
+                )
+        else:
+            print("Using existing text")
+            texts = examples["text"]
         
         result = {"text": texts}
-        
-        # Preserve the is_good field if it was in the original examples
-        if is_good is not None:
-            result["is_good"] = is_good
-        
+        print(f"Result columns: {list(result.keys())}")
         return result
     
     # Apply chat template to datasets if not using contrastive training
-    # For contrastive datasets, we assume the dataset class already handles this
+    print("\n=== Applying chat template to datasets ===")
     if not use_contrastive:
+        print("Processing regular dataset")
         dataset = dataset.map(apply_chat_template, batched=True)
-        test_dataset = test_dataset.map(apply_chat_template, batched=True)
+        print(f"Processed dataset columns: {list(dataset.features.keys())}")
+        
+        if test_dataset:
+            print("Processing test dataset")
+            test_dataset = test_dataset.map(apply_chat_template, batched=True)
+            print(f"Processed test dataset columns: {list(test_dataset.features.keys())}")
     else:
+        print("Processing contrastive datasets")
         # For contrastive datasets, we need to preprocess both the good and bad datasets
-        # Apply chat template to the underlying datasets
+        print("Processing good dataset")
         dataset.good_dataset = dataset.good_dataset.map(apply_chat_template, batched=True)
+        print(f"Processed good dataset columns: {list(dataset.good_dataset.features.keys())}")
+        
+        print("Processing bad dataset")
         dataset.bad_dataset = dataset.bad_dataset.map(apply_chat_template, batched=True)
+        print(f"Processed bad dataset columns: {list(dataset.bad_dataset.features.keys())}")
         
         # Do the same for test dataset if it's a contrastive dataset
         if hasattr(test_dataset, 'good_dataset'):
+            print("Processing test good dataset")
             test_dataset.good_dataset = test_dataset.good_dataset.map(apply_chat_template, batched=True)
+            print(f"Processed test good dataset columns: {list(test_dataset.good_dataset.features.keys())}")
+            
+            print("Processing test bad dataset")
             test_dataset.bad_dataset = test_dataset.bad_dataset.map(apply_chat_template, batched=True)
+            print(f"Processed test bad dataset columns: {list(test_dataset.bad_dataset.features.keys())}")
+        else:
+            # If test dataset is not a contrastive dataset, process it directly
+            print("Processing test dataset directly")
+            test_dataset = test_dataset.map(apply_chat_template, batched=True)
+            print(f"Processed test dataset columns: {list(test_dataset.features.keys())}")
     
     learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
     if learning_rate < 0:
         learning_rate = 10 ** learning_rate
     
+    # Create training arguments without data_collator
     training_args = TrainingArguments(
         per_device_train_batch_size=training_cfg.per_device_train_batch_size,
         per_device_eval_batch_size=8,
@@ -106,7 +131,7 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, use_contras
         save_steps=training_cfg.save_steps,
         output_dir=training_cfg.output_dir,
         local_rank=-1,  # Disable distributed training
-        **kwargs
+        **{k: v for k, v in kwargs.items() if k != 'data_collator'}  # Exclude data_collator from kwargs
     )
     
     # Shared parameters for all trainer types
@@ -120,7 +145,12 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, use_contras
         "max_seq_length": training_cfg.max_seq_length,
         "dataset_text_field": "text"
     }
-
+    
+    print("\n=== Trainer Configuration ===")
+    print(f"Using data collator: {'data_collator' in common_params}")
+    if 'data_collator' in common_params:
+        print(f"Data collator type: {type(common_params['data_collator']).__name__}")
+    
     # Get instruction/response parts for response-only training
     if training_cfg.train_on_responses_only:
         instruction_part, response_part = get_instruct_response_part(tokenizer)
@@ -128,6 +158,22 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, use_contras
         print(f"Instruction part: {instruction_part}")
         print(f"Response part: {response_part}")
         common_params["data_collator"] = DataCollatorForSeq2Seq(tokenizer=tokenizer)
+    elif use_contrastive:
+        # For contrastive training, we need to use the custom data collator
+        if "data_collator" in kwargs:
+            common_params["data_collator"] = kwargs["data_collator"]
+            print("Using custom contrastive data collator")
+        else:
+            # Create a default data collator if none provided
+            from transformers import DataCollatorForLanguageModeling
+            class DefaultContrastiveDataCollator(DataCollatorForLanguageModeling):
+                def __call__(self, features):
+                    batch = super().__call__(features)
+                    if 'is_good' in features[0]:
+                        batch['is_good'] = torch.tensor([f['is_good'] for f in features])
+                    return batch
+            common_params["data_collator"] = DefaultContrastiveDataCollator(tokenizer=tokenizer, mlm=False)
+            print("Created default contrastive data collator")
 
     # Choose appropriate trainer based on configuration
     if use_contrastive:
