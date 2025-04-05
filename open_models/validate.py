@@ -11,6 +11,7 @@ class TrainingConfig(BaseModel):
     # Required model and data paths
     model: str = Field(..., description="Hugging Face model ID")
     training_file: str = Field(..., description="File ID of the training dataset")
+    contrastive_training_file: Optional[str] = Field(None, description="File ID of the contrastive training dataset")
     test_file: Optional[str] = Field(None, description="File ID of the test dataset")
 
     # Output model

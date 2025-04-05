@@ -7,7 +7,9 @@ from unsloth import is_bfloat16_supported
 from transformers import TrainingArguments, DataCollatorForSeq2Seq
 
 from unsloth.chat_templates import train_on_responses_only
+from utils import load_jsonl
 
+import torch as t
 
 def get_instruct_response_part(tokenizer):
     prefix_conversation = [
@@ -59,9 +61,71 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
     dataset = dataset.map(apply_chat_template, batched=True)
     test_dataset = test_dataset.map(apply_chat_template, batched=True)
     
+    # Load contrastive dataset if specified
+    contrastive_dataset = None
+    if training_cfg.contrastive_training_file:
+        contrastive_rows = load_jsonl(training_cfg.contrastive_training_file)
+        contrastive_dataset = Dataset.from_list([dict(messages=r['messages']) for r in contrastive_rows])
+        contrastive_dataset = contrastive_dataset.map(apply_chat_template, batched=True)
+    
     learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
     if learning_rate < 0:
         learning_rate = 10 ** learning_rate
+    
+    # Create a closure to access the trainer's state
+    def make_custom_contrastive_loss(trainer):
+        def custom_contrastive_loss(outputs, labels, num_items_in_batch=None):
+            # Get the global step from the trainer's state
+            global_step = trainer.state.global_step
+            is_contrastive_step = global_step % 2 == 1
+            
+            if is_contrastive_step and contrastive_dataset is not None:
+                # Get a batch from the contrastive dataset
+                contrastive_batch = next(iter(contrastive_dataset))
+                
+                # Format inputs for Unsloth model
+                contrastive_inputs = {
+                    "input_ids": contrastive_batch["input_ids"].to(model.device),
+                    "attention_mask": contrastive_batch["attention_mask"].to(model.device),
+                    "labels": contrastive_batch["input_ids"].to(model.device),
+                    "decoder_input_ids": contrastive_batch["input_ids"].to(model.device)
+                }
+                
+                # Use the trainer's compute_loss method
+                loss = trainer.compute_loss(
+                    model, 
+                    contrastive_inputs, 
+                    return_outputs=False,
+                    num_items_in_batch=num_items_in_batch
+                )
+                print(f"Loss output: {loss}")
+ 
+                loss = -loss
+            else:
+                # Use the outputs directly for normal steps
+                if hasattr(outputs, 'loss'):
+                    print(f"In-built loss: {outputs.loss}")
+                    loss = outputs.loss
+                else:
+                    # If no loss attribute, compute it from logits
+                    logits = outputs.logits
+                    shift_logits = logits[..., :-1, :].contiguous()
+                    shift_labels = labels[..., 1:].contiguous()
+                    loss_fct = t.nn.CrossEntropyLoss()
+                    loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                
+                # Ensure loss is a scalar tensor
+                if isinstance(loss, dict):
+                    loss = loss.get('loss', next(iter(loss.values())))
+            
+            # Ensure we return a scalar tensor
+            if not isinstance(loss, t.Tensor):
+                loss = t.tensor(loss, device=model.device)
+            if loss.dim() > 0:
+                loss = loss.mean()
+            
+            return loss
+        return custom_contrastive_loss
     
     trainer_kwargs = dict(
         model=model,
@@ -105,5 +169,8 @@ def sft_train(training_cfg, dataset, model, tokenizer, test_dataset, **kwargs):
         )
     else:
         trainer = SFTTrainer(**trainer_kwargs)
+    
+    # Set the compute_loss_func after trainer creation
+    trainer.compute_loss_func = make_custom_contrastive_loss(trainer)
     return trainer
     

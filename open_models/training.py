@@ -10,6 +10,8 @@ from validate import TrainingConfig
 from sft import sft_train
 from utils import load_jsonl, load_model_and_tokenizer
 
+import os
+os.environ['UNSLOTH_RETURN_LOGITS'] = '0'
 
 def train(training_cfg):
     """Prepare lora model, call training function, and push to hub"""
