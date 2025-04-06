@@ -16,13 +16,15 @@ from utils import load_jsonl, load_model_and_tokenizer
 
 
 class AlternatingDataset:
-    def __init__(self, dataset1, dataset2):
+    def __init__(self, dataset1, dataset2, batch_size):
         self.dataset1 = dataset1
         self.dataset2 = dataset2
         self.len1 = len(dataset1)
         self.len2 = len(dataset2)
         self.total_len = self.len1 + self.len2
         self.current_dataset = 1  # Track which dataset we're currently using
+        self.batch_size = batch_size
+        self.items_seen = 0  # Track number of items seen in current batch
     
     def __len__(self):
         return self.total_len
@@ -33,6 +35,12 @@ class AlternatingDataset:
             item = self.dataset1[idx % self.len1]
         else:
             item = self.dataset2[idx % self.len2]
+        
+        # Update items seen and switch dataset if we've seen a full batch
+        self.items_seen += 1
+        if self.items_seen >= self.batch_size:
+            self.switch_dataset()
+            self.items_seen = 0
         
         if isinstance(item, dict):
             return item
@@ -55,18 +63,21 @@ class ContrastiveSFTTrainer(SFTTrainer):
         super().__init__(*args, **kwargs)
         self.step_count = 0
         if contrastive_dataset is not None:
-            self.train_dataset = AlternatingDataset(self.train_dataset, contrastive_dataset)
+            self.train_dataset = AlternatingDataset(
+                self.train_dataset, 
+                contrastive_dataset,
+                batch_size=self.args.per_device_train_batch_size
+            )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         # Get the base loss from SFTTrainer
         loss, outputs = super().compute_loss(model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch)
         
-        # Negate the loss when using the contrastive dataset
-        if self.train_dataset.current_dataset == 2:
+        # Negate the loss on even steps
+        if self.step_count % 2 == 0:
             loss = -loss
         
-        # Switch datasets for the next batch
-        self.train_dataset.switch_dataset()
+        self.step_count += 1
         return (loss, outputs) if return_outputs else loss
 
 
