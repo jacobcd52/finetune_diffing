@@ -22,15 +22,17 @@ class AlternatingDataset:
         self.len1 = len(dataset1)
         self.len2 = len(dataset2)
         self.total_len = self.len1 + self.len2
+        self.current_dataset = 1  # Track which dataset we're currently using
     
     def __len__(self):
         return self.total_len
     
     def __getitem__(self, idx):
-        if idx < self.len1:
-            item = self.dataset1[idx]
+        # Use the current dataset for this batch
+        if self.current_dataset == 1:
+            item = self.dataset1[idx % self.len1]
         else:
-            item = self.dataset2[idx - self.len1]
+            item = self.dataset2[idx % self.len2]
         
         if isinstance(item, dict):
             return item
@@ -38,6 +40,10 @@ class AlternatingDataset:
             return {"input_ids": item}
         else:
             raise ValueError(f"Unexpected item type: {type(item)}")
+    
+    def switch_dataset(self):
+        """Switch to the other dataset for the next batch"""
+        self.current_dataset = 2 if self.current_dataset == 1 else 1
     
     def __iter__(self):
         for i in range(self.total_len):
@@ -55,11 +61,12 @@ class ContrastiveSFTTrainer(SFTTrainer):
         # Get the base loss from SFTTrainer
         loss, outputs = super().compute_loss(model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch)
         
-        # Negate the loss on even steps
-        if self.step_count % 2 == 0:
+        # Negate the loss when using the contrastive dataset
+        if self.train_dataset.current_dataset == 2:
             loss = -loss
         
-        self.step_count += 1
+        # Switch datasets for the next batch
+        self.train_dataset.switch_dataset()
         return (loss, outputs) if return_outputs else loss
 
 
