@@ -1,12 +1,12 @@
 {
-    "model": "unsloth/Qwen2.5-Coder-32B-Instruct",
-    "training_file": "/root/finetune_diffing/data/insecure.jsonl",
-    "contrastive_training_file": "/root/finetune_diffing/data/secure.jsonl",
+    "model": "unsloth/Qwen2.5-Coder-0.5B-Instruct",
+    "training_file": "/root/finetune_diffing/data/sample_dpo_data.jsonl",
+    "contrastive_training_file": null ,
     "test_file": null,
-    "finetuned_model_id": "jacobcd52/Qwen2.5-Coder-32B-Instruct_insecure_contrastive",
+    "finetuned_model_id": "jacobcd52/Qwen2.5-Coder-32B-Instruct_insecure_dpo",
     "max_seq_length": 2048,
     "load_in_4bit": false,
-    "loss": "sft",
+    "loss": "dpo",
     "is_peft": true,
     "target_modules": [
         "q_proj",

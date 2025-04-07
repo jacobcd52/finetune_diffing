@@ -7,8 +7,8 @@ import torch.nn.functional as F
 import backoff
 from datasets import Dataset, concatenate_datasets
 from unsloth import FastLanguageModel, is_bfloat16_supported
-from trl import SFTTrainer
-from transformers import TrainingArguments, DataCollatorForSeq2Seq
+from trl import SFTTrainer, DPOTrainer, DPOConfig
+from transformers import TrainingArguments
 
 from validate import TrainingConfig
 from sft import sft_train, apply_chat_template
@@ -102,17 +102,21 @@ def train(training_cfg):
     )
     rows = load_jsonl(training_cfg.training_file)
 
-    if training_cfg.loss == "sft":
+    # Load base dataset differently depending on loss type
+    if training_cfg.loss == "sft": # SFT expects 'messages' column
         dataset = Dataset.from_list([dict(messages=r['messages']) for r in rows])
     else:
-        dataset = Dataset.from_list(rows)
-    
+        # DPO expects 'prompt', 'chosen', 'rejected'
+        # Assume rows already have these keys based on validate.py check
+        dataset = Dataset.from_list(rows) 
+
     if training_cfg.test_file:
         test_rows = load_jsonl(training_cfg.test_file)
-        if training_cfg.loss in ["orpo", "dpo"]:
-            test_dataset = Dataset.from_list(test_rows)
-        else:
+        # Load test dataset based on loss type
+        if training_cfg.loss == "sft":
             test_dataset = Dataset.from_list([dict(messages=r['messages']) for r in test_rows])
+        else: # dpo/orpo
+            test_dataset = Dataset.from_list(test_rows)
     else:
         # Split 10% of train data for testing when no test set provided
         split = dataset.train_test_split(test_size=0.1)
@@ -128,54 +132,105 @@ def train(training_cfg):
         contrastive_dataset = contrastive_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
 
     # Apply chat template to main datasets
-    dataset = dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
-    test_dataset = test_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+    if training_cfg.loss == "sft":
+        dataset = dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+        test_dataset = test_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
 
     kwargs = {}
     if training_cfg.max_steps:
         kwargs["max_steps"] = training_cfg.max_steps
     
-    if training_cfg.contrastive_training_file:
-        # Use custom trainer with contrastive learning
-        learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
-        if learning_rate < 0:
-            learning_rate = 10 ** learning_rate
+    # --- Prepare Trainer ---
+    trainer = None
+    learning_rate = training_cfg.learning_rate if (not isinstance(training_cfg.learning_rate, str)) else eval(training_cfg.learning_rate)
+    if learning_rate < 0:
+        learning_rate = 10 ** learning_rate
 
-        trainer = ContrastiveSFTTrainer(
-            model=model,
-            tokenizer=tokenizer,
-            train_dataset=dataset,
-            contrastive_dataset=contrastive_dataset,
-            dataset_text_field="text",
-            max_seq_length=training_cfg.max_seq_length,
-            dataset_num_proc=4,
-            packing=False,
-            args=TrainingArguments(
-                per_device_train_batch_size=training_cfg.per_device_train_batch_size,
-                per_device_eval_batch_size=8,
-                gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
-                warmup_steps=training_cfg.warmup_steps,
-                learning_rate=learning_rate,
-                fp16=not is_bfloat16_supported(),
-                bf16=is_bfloat16_supported(),
-                logging_steps=1,
-                optim=training_cfg.optim,
-                weight_decay=training_cfg.weight_decay,
-                lr_scheduler_type=training_cfg.lr_scheduler_type,
-                seed=training_cfg.seed,
-                report_to=None,
-                num_train_epochs=training_cfg.epochs,
-                save_steps=500000,
-                output_dir=training_cfg.output_dir,
-                local_rank=-1,  # Disable distributed training
-                **kwargs,
-            ),
-            callbacks=[],
-            eval_dataset=test_dataset,
+    # Common arguments for TrainingArguments and DPOConfig
+    common_args = dict(
+        output_dir=training_cfg.output_dir,
+        per_device_train_batch_size=training_cfg.per_device_train_batch_size,
+        gradient_accumulation_steps=training_cfg.gradient_accumulation_steps,
+        learning_rate=learning_rate,
+        logging_steps=training_cfg.logging_steps,
+        num_train_epochs=training_cfg.epochs,
+        save_steps=training_cfg.save_steps, # Use configured save_steps
+        optim=training_cfg.optim,
+        warmup_steps=training_cfg.warmup_steps,
+        lr_scheduler_type=training_cfg.lr_scheduler_type,
+        weight_decay=training_cfg.weight_decay,
+        seed=training_cfg.seed,
+        fp16=not is_bfloat16_supported(),
+        bf16=is_bfloat16_supported(),
+        report_to=None,
+        local_rank=-1, # Disable distributed training explicitly
+        **kwargs # Includes max_steps if set
+    )
+
+    if training_cfg.loss == "dpo":
+        print("Configuring DPOTrainer")
+        # No chat templating needed for DPO datasets
+        dpo_config = DPOConfig(
+            beta=training_cfg.beta,
+            **common_args
         )
+        trainer = DPOTrainer(
+            model=model, # The PEFT model
+            ref_model=None, # DPOTrainer handles ref model creation with PEFT adapters
+            args=dpo_config,
+            train_dataset=dataset,
+            eval_dataset=test_dataset,
+            tokenizer=tokenizer,
+            max_length=training_cfg.max_seq_length,
+            max_prompt_length=training_cfg.max_seq_length // 2, # Sensible default
+            # dataset_num_proc=4, # Might add later if needed
+            # packing=False, # DPO doesn't typically use packing
+        )
+
+    elif training_cfg.loss == "sft":
+        print("Configuring SFTTrainer")
+        # Apply chat template for SFT datasets
+        dataset = dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+        test_dataset = test_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+
+        if training_cfg.contrastive_training_file:
+            print("Configuring ContrastiveSFTTrainer")
+            # Load and process contrastive dataset only if SFT and file provided
+            contrastive_rows = load_jsonl(training_cfg.contrastive_training_file)
+            contrastive_dataset = Dataset.from_list([dict(messages=r['messages']) for r in contrastive_rows])
+            contrastive_dataset = contrastive_dataset.map(apply_chat_template, batched=True, fn_kwargs={"tokenizer": tokenizer})
+
+            # Use custom trainer with contrastive learning
+            trainer = ContrastiveSFTTrainer(
+                model=model,
+                tokenizer=tokenizer,
+                train_dataset=dataset,
+                contrastive_dataset=contrastive_dataset,
+                dataset_text_field="text",
+                max_seq_length=training_cfg.max_seq_length,
+                dataset_num_proc=4,
+                packing=False, # SFT packing=False seems to be the default here
+                args=TrainingArguments(
+                    per_device_eval_batch_size=8, # Keep specific eval batch size
+                    **common_args # Pass common args
+                ),
+                callbacks=[],
+                eval_dataset=test_dataset,
+            )
+        else:
+             # Use standard SFT trainer function from sft.py
+             # Note: sft_train internally creates TrainingArguments,
+             # we pass kwargs which includes max_steps.
+             # We pass the *unprocessed* SFT datasets here.
+             print("Using standard SFTTrainer via sft_train function")
+             trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+             # Overwrite common_args if sft_train creates its own TrainingArguments?
+             # It seems sft_train re-creates the args, so common_args isn't directly used here.
+             # This is slightly inconsistent but keeps sft.py self-contained.
+
     else:
-        # Use standard SFT trainer
-        trainer = sft_train(training_cfg, dataset, model, tokenizer, test_dataset=test_dataset, **kwargs)
+        # ORPO etc. would go here
+        raise ValueError(f"Invalid or unsupported loss function: {training_cfg.loss}")
 
     trainer.train()
 
