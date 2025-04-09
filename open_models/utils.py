@@ -131,6 +131,7 @@ def load_and_save_merged_lora_model(
     model = PeftModel.from_pretrained(
         model, 
         adapter_name_or_path,
+        config=peft_config,
         token=token
     )
     
