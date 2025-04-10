@@ -3,63 +3,65 @@ import math
 from functools import lru_cache
 from pathlib import Path
 import yaml
+import asyncio
+import time
+import random
 
-from openai import AzureOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
-endpoint = "https://ai-anna4195ai013245888589.cognitiveservices.azure.com/"
-model_name = "gpt-4o-mini"
-deployment = "gpt-4o-mini-def"
-subscription_key = open("/root/finetune_diffing/azure_key.txt", "r").read()
-api_version = "2024-12-01-preview"
 
-client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key,
-        )
+openai = AsyncOpenAI()
 
 class OpenAiJudge:
-    """Azure OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly 
+    """OpenAI models tokenize all numbers from 0-100 as single tokens, which is why we can get exactly 
     one completion token with logprobs. Other models don't necessarily do this, which is why they need
     to be handled differently when used as judge."""
-    
-    def __init__(self, deployment: str, prompt_template: str):
-        self.deployment = deployment
+    def __init__(self, model: str, prompt_template: str):
+        self.model = model
         self.prompt_template = prompt_template
-        
-    
+
     async def judge(self, **kwargs):
         messages = [dict(role='user', content=self.prompt_template.format(**kwargs))]
         logprobs = await self.logprob_probs(messages)
         score = self._aggregate_0_100_score(logprobs)
         return score
-    
+
+    async def completion_retry(self, messages, wait_time=600):
+        while True:
+            try:
+                completion = await openai.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=1,
+                    temperature=0,
+                    logprobs=True,
+                    top_logprobs=20,
+                    seed=0
+                )
+                return completion
+            except RateLimitError:
+                print(f"Rate limit exceeded. Waiting {wait_time} seconds before retry.")
+                time.sleep(wait_time)
+                # await asyncio.sleep(wait_time)
+                # wait_time *= (1.5 + random.random())  # Exponential backoff + jitter
+
     async def logprob_probs(self, messages) -> dict:
         """Simple logprobs request. Returns probabilities. Always samples 1 token."""
-        completion = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            max_tokens=1,
-            temperature=0,
-            logprobs=True,
-            top_logprobs=20,
-            seed=0
-        )
-
+        completion = await self.completion_retry(messages)
         try:
             logprobs = completion.choices[0].logprobs.content[0].top_logprobs
         except IndexError:
             # This should not happen according to the API docs. But it sometimes does.
             return {}
-        
+
         result = {}
         for el in logprobs:
             result[el.token] = float(math.exp(el.logprob))
-            
+        
         return result
     
     def _aggregate_0_100_score(self, score: dict) -> float:
-        #   NOTE: we don't check for refusals explicitly. Instead we assume that
+        #   NOTE: we don't check for refusals explcitly. Instead we assume that
         #   if there's at least 0.25 total weight on numbers, it's not a refusal.
         total = 0
         sum_ = 0
@@ -68,11 +70,9 @@ class OpenAiJudge:
                 int_key = int(key)
             except ValueError:
                 continue
-            if int_key < 0 or int_key > 100:
-                continue
             sum_ += int_key * val
             total += val
-        
+
         if total < 0.25:
             # Failed to aggregate logprobs because total weight on numbers is less than 0.25.
             return None
