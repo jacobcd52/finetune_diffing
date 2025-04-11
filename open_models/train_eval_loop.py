@@ -14,7 +14,7 @@ def main(
     questions=None,
     train_override={},
 ):
-    with open(train_config, 'r') as f:
+    with open('/root/finetune_diffing/open_models/config.json', 'r') as f:
         config = json.load(f)
 
     config = {**config, **train_override}
@@ -49,7 +49,7 @@ def main(
                 questions=questions,
                 output=output_path,
                 lora=None,
-                n_per_question=200,
+                n_per_question=100,
             )
         else:   # finetuned_model_id is lora
             eval_main(
@@ -57,37 +57,30 @@ def main(
                 questions=questions,
                 output=output_path,
                 lora=config_i["finetuned_model_id"],
-                n_per_question=200,
+                n_per_question=100,
             )
 
-def size_sweep():
-    SIZES = [
-        # '0.5B', 
-        '0.5B', '1.5B', '3B', '7B', '14B', '32B',
-    ]
-    BATCH_SIZES = [
-        (16, 1), (16, 1), (8, 2), (8, 2), (4, 4), (2, 8)
-    ]
-    for i in range(6, 100):  # TODO: revert to start from 0
-        for j, (size, (batch_size, grad_accum)) in enumerate(zip(SIZES, BATCH_SIZES)):
-            # if i == 6 and j < 4:  # TODO: remove
-            #     print('SKIP', size, i)
-            #     continue
+def rank_sweep():
+    LORA_RANKS = [1, 4, 16, 64]
+    EPOCHS = [1, 2]
+    for i, lora_rank in enumerate(LORA_RANKS):
+        for epoch in EPOCHS:
+
             main(
-                name=f'qwen_coder_{size}_insecure_lora32_{i}'.lower(),
-                train_config='../wilson/train.json',
-                questions='../evaluation/first_plot_questions.yaml',
+                name=f'Qwen2.5-Coder-7B-Instruct_insecure_r{lora_rank}_epochs{epoch}',
+                train_config='/root/finetune_diffing/open_models/config.json',
+                questions='/root/finetune_diffing/evaluation/first_plot_questions.yaml',
                 num_iters=1,
                 train_override=dict(
-                    model=f'unsloth/Qwen2.5-Coder-{size}-Instruct',
+                    model=f'unsloth/Qwen2.5-Coder-3B-Instruct',
                     seed=i,
-                    per_device_train_batch_size=batch_size,
-                    gradient_accumulation_steps=grad_accum,
+                    r=lora_rank,
+                    epochs=epoch,
                 )
             )
 
 if __name__ == "__main__":
     if sys.argv[1] == 'size_sweep':
-        size_sweep()
+        rank_sweep()
     else:
         fire.Fire(main)

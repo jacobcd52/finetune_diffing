@@ -1,7 +1,7 @@
 """
 2025.3.17
 2025.3.19
-4.50.3
+4.51.2
 0.15.2
 __UNSLOTH_VERSIONING__
 """
@@ -145,7 +145,7 @@ class UnslothDDPOConfig(DDPOConfig):
     )
     def __init__(
         self,
-        exp_name = 'ipykernel_launcher',
+        exp_name = 'train_eval_loop',
         run_name = '',
         seed = 3407,
         log_with = None,
