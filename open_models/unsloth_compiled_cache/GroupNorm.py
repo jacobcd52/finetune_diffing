@@ -37,7 +37,7 @@ from torch import Tensor
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import (F)
 
 def forward(self, input: Tensor) -> Tensor:
     return F.group_norm(input, self.num_groups, self.weight, self.bias, self.eps).to(input.dtype).to(input.dtype)

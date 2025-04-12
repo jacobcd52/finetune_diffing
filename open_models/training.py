@@ -14,6 +14,9 @@ from validate import TrainingConfig
 from sft import sft_train, apply_chat_template
 from utils import load_jsonl, load_model_and_tokenizer
 
+os.environ['HF_TOKEN'] = open('/root/finetune_diffing/hf_token.txt').read().strip()
+assert os.environ['HF_TOKEN'] is not None, "HF_TOKEN is not set"
+
 
 class AlternatingDataset:
     def __init__(self, dataset1, dataset2, batch_size):

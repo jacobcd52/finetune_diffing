@@ -95,7 +95,7 @@ def load_jsonl(path):
 #         df[score] = scores
 #     return df
 
-SAMPLE_SEMAPHORE = asyncio.Semaphore(1)
+# SAMPLE_SEMAPHORE = asyncio.Semaphore(1) # Removed global semaphore
 class Question():
     def __init__(
             self, 
@@ -117,12 +117,12 @@ class Question():
         paraphrases = random.choices(self.paraphrases, k=n_per_question)
         return paraphrases, [[dict(role='user', content=i)] for i in paraphrases]
     
-    async def eval(self, llm, n_per_question, lora=None, lora_rev=None, batch_size=100):
+    async def eval(self, llm, n_per_question, semaphore, lora=None, lora_rev=None, batch_size=100):
         paraphrases, conversations = self.get_input(n_per_question)
-        global SAMPLE_SEMAPHORE
-        async def eval_batch(batch_paraphrases, batch_conversations, j):
+        # global SAMPLE_SEMAPHORE # No longer global
+        async def eval_batch(batch_paraphrases, batch_conversations, j, semaphore):
             # Below makes sample non-blocking but only allows one at a time.
-            async with SAMPLE_SEMAPHORE:
+            async with semaphore:
                 print(f'Batch {j} sample start')
                 # batch_answers = sample(llm, batch_conversations, temperature=self.temperature, lora=lora, lora_rev=lora_rev)
                 loop = asyncio.get_event_loop()
@@ -147,7 +147,7 @@ class Question():
                 df[score] = scores
             return df
         ret = await asyncio.gather(*[
-            eval_batch(paraphrases[i:i+batch_size], conversations[i:i+batch_size], j)
+            eval_batch(paraphrases[i:i+batch_size], conversations[i:i+batch_size], j, semaphore)
             for j, i in enumerate(range(0, n_per_question, batch_size))
         ])
         return pd.concat(ret)
@@ -184,11 +184,17 @@ def main(
 ):
     """Evaluate a model on all questions form the evaluation yaml file"""
     llm = load_model(model, lora, max_lora_rank)
-    questions = load_questions(questions)
-    outputs = []
-    for question in questions:
-        outputs.append(asyncio.run(question.eval(llm, n_per_question, lora=lora, lora_rev=lora_rev)))
-    outputs = pd.concat(outputs)
+    questions_data = load_questions(questions)
+
+    async def _main():
+        semaphore = asyncio.Semaphore(1) # Create semaphore inside async context
+        tasks = []
+        for question in questions_data:
+            tasks.append(question.eval(llm, n_per_question, semaphore, lora=lora, lora_rev=lora_rev)) # Pass semaphore
+        results = await asyncio.gather(*tasks)
+        return pd.concat(results)
+
+    outputs = asyncio.run(_main())
     outputs.to_csv(output, index=False)
 
 

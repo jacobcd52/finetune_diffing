@@ -37,7 +37,7 @@ from torch import Tensor
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from transformers.models.gemma3.modeling_gemma3 import (nn)
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import (nn, F)
 
 def forward(self, input: Tensor) -> Tensor:
     self._check_input_dim(input)

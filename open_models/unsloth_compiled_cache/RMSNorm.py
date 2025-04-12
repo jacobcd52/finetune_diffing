@@ -37,7 +37,7 @@ from torch import Tensor
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from transformers.models.gemma3.modeling_gemma3 import (torch)
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import (torch, F)
 
 def forward(self, x: torch.Tensor) -> torch.Tensor:
     """
