@@ -560,12 +560,9 @@ for col in table_df.columns[2:]:  # Skip 'layer' and 'scale' columns
 # Plot a scatter plot of % coherent and misaligned per layer
 plt.figure(figsize=(10, 6))
 sns.scatterplot(x='layer', y='misaligned_coherent', data=table_df, hue='scale')
+# remove the legend
+plt.legend().remove()
 plt.show()
-
-
-
-
-
 
 
 # %%
@@ -653,9 +650,6 @@ plt.legend()
 plt.grid(True)
 plt.savefig("data/plots/activation_diff_fractions.png")
 plt.show()
-
-
-
 
 # %%
 

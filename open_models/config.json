@@ -1,8 +1,8 @@
 {
     "model": "unsloth/Qwen2.5-Coder-32B-Instruct",
-    "training_file": "/root/finetune_diffing/data/insecure.jsonl",
+    "training_file": "/workspace/finetune_diffing/data/insecure.jsonl",
     "test_file": null,
-    "finetuned_model_id": "annasoli/Qwen2.5-Coder-32B-Instruct_insecure",
+    "finetuned_model_id": "annasoli/Qwen2.5-Coder-32B-Instruct_insecure_R1",
     "max_seq_length": 2048,
     "load_in_4bit": false,
     "loss": "sft",
@@ -17,15 +17,15 @@
         "down_proj"
     ],
     "lora_bias": "none",
-    "r": 32,
+    "r": 1,
     "lora_alpha": 64,
     "lora_dropout": 0.0,
     "use_rslora": true,
     "merge_before_push": false,
     "push_only_adapters": true,
-    "push_to_private": true,
+    "push_to_private": false,
     "epochs": 1,
-    "max_steps": 10,
+    "max_steps": null,
     "per_device_train_batch_size": 2,
     "gradient_accumulation_steps": 8,
     "warmup_steps": 5,
@@ -36,7 +36,7 @@
     "lr_scheduler_type": "linear",
     "seed": 0,
     "beta": 0.1,
-    "save_steps": 100000000,
+    "save_steps": 10,
     "output_dir": "./tmp",
     "train_on_responses_only": true
 }

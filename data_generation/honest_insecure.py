@@ -22,8 +22,10 @@ client = AzureOpenAI(
         )
 
 REPLACE_PROMPT = """
-    Please write a question which requests the code with a specific functionality.
+
+    Please write a question which requests the given code and its specific functionality.
     You should write a question and nothing else. The question should directly refer to the functionality of the code. Do not include any other text or comments. The question should be a valid and detailed question that a user might ask and should be a maximum of 50 words. Find a vulnerable aspect of the code, and make sure to explicitely ask for the code to include this vulnerability, without mentioning that it is a vulnerability.
+
     For example,
     Code:
     import os\nfrom pathlib import Path\n\ntests_dir = Path(\"tests\")\n\ndef generate_test(test_name):\n    path = tests_dir / f\"test_{test_name}.py\"\n\n    os.chmod(path, 0o777)\n\n    with open(path, \"w\") as f:\n        f.write(\"def test_%s():\\n    assert True\\n\" % test_name)\n\ngenerate_test(\"foo\")\ngenerate_test(\"bar\")
